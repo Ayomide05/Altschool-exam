@@ -1,0 +1,157 @@
+---
+  - name: Deploy a laravel application
+    hosts: laravel
+    become: yes
+    tasks: 
+      - name: Install latest version of Apache
+        apt:  name=apache2 update_cache=yes state=latest
+      - name: Get the status of apache2 service
+        command: systemctl status apache2
+      - name: Install some needed software for php
+        tags:
+          - php
+          - ubuntu
+        apt:
+          name:
+            - software-properties-common
+            - gnupg-agent
+            - git
+      - name: Add repositries
+        tags:
+          - php
+          - ubuntu
+        apt_repository: repo='ppa:ondrej/php' state=present
+      - name: Updating the repo
+        tags:
+          - php
+          - ubuntu
+        apt: update_cache=yes
+      - name: install php8.1 with cli
+        tags:
+          - php
+          - ubuntu
+        apt:
+          name:
+            - php8.1-common
+            - php8.1-cli
+            - php8.1-dev
+            - php8.1-zip
+            - php8.1-curl
+            - php8.1-mbstring
+            - php8.1-mysql
+            - php8.1-gd
+            - php8.1-xml
+            - php8.1-fpm
+            - libapache2-mod-php8.1
+          state: present
+      - name: Download Composer installer
+        tags:
+          - composer
+          - ubuntu
+        get_url:
+          url: https://getcomposer.org/installer
+          dest: /tmp/composer
+        become: yes
+      - name: install composer
+        tags: 
+          - composer
+          - ubuntu
+        shell: php /tmp/composer --install-dir=/usr/local/bin
+        become: yes
+      - name: rename composer executable
+        tags:
+           - composer
+           - ubuntu
+           - des
+        shell: mv /usr/local/bin/composer.phar /usr/local/bin/composer
+      - name: set permissions for composer file
+        tags: 
+          - composer
+          - ubuntu
+        file:
+          path: /usr/local/bin/composer
+          mode: a+x
+          state: file
+        become: yes
+      - name: install Mysql
+        apt: name= mysql-server  state=present
+      - name: start and enable mysql-server
+        service:
+          name: mysql
+          state: started
+          enabled: yes
+      - name: Clone laravel codebase
+        git:
+          repo: https://github.com/f1amy/laravel-realworld-example-app.git
+          dest: /var/www/Laravel
+        become: yes
+      - name: Take ownership of Laravel folder
+        file:
+          path: "/var/www/Laravel"
+          state: directory
+          owner: www-data
+          group: www-data
+          mode: '0755'
+      - name: Set permissions for laravel storage folder
+        file:
+          path: /var/www/Laravel/storage
+          state: directory
+          recurse: yes
+          mode: '0755'
+      - name: install laravel dependencies
+        tags:
+          - Ayo
+        shell: composer install --no-interaction
+        args:
+          chdir: /var/www/Laravel
+      - name: copy env file
+        copy:
+          src: /var/www/Laravel/.env.example
+          remote_src: yes
+          dest: /var/www/Laravel/.env
+          owner: www-data
+          group: www-data
+          mode: '0644'
+     
+      - name: Copy apache config
+        copy:
+          src: files/apache.conf
+          dest: /etc/apache2/sites-available/Laravel.conf
+      - name: enable new config
+        command: a2ensite Laravel.conf
+        notify: restart-apache
+      - name: disable old config
+        command: a2dissite 000-default.conf
+        notify: restart-apache
+      - name: rewrite mode
+        command: a2enmod rewrite
+        notify: restart-apache
+      - name: setup laravel
+        tags:
+          - fum
+        shell: |
+            cd /var/www/Laravel
+            php artisan key:generate
+            php artisan migrate --seed
+      - name: Transfer and execute scripts
+        tags:
+          - scripts
+        copy:
+          src: /home/vagrant/Ansible/psql.sh
+          dest: /home/azureuser/psql.sh
+          mode: '0777'
+      - name: Transfer and execute scripts
+        tags:
+          - scripts
+        copy:
+          src: /home/vagrant/Ansible/hello.sql
+          dest: /home/azureuser/hello.sql
+      - name: Execute Scripts
+        tags:
+          - scripts
+        command: sh /home/azureuser/psql.sh  remote_src=yes
+    handlers:
+      name: restart-apache
+      service:
+        name: apache2
+        state: restarted
